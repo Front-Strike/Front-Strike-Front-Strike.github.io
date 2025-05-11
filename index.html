@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Frontstrike Wagering</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-type="module">
+    import * as React from 'react';
+    import { useState, useEffect } from 'react';
+    import * as ReactDOM from 'react-dom';
+    import * as anchor from 'https://cdn.jsdelivr.net/npm/@coral-xyz/anchor@0.29.0/+esm';
+    import * as web3 from 'https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/+esm';
+    import idl from './idl.json' assert { type: 'json' };
+
+    const PROGRAM_ID = new web3.PublicKey('Ffd2G8c3wPa8LCTSfH3Gw4RrfcDyKs6ehDLRKZWC2qXT');
+
+    interface PlayerInfo {
+      wallet: web3.PublicKey;
+      lives_held: number;
+      deposited: boolean;
+    }
+
+    interface Lobby {
+      match_id: string;
+      player_accounts: PlayerInfo[];
+      total_pot: number;
+      life_value: number;
+      created_at: number;
+      team1_deposits: number;
+      team2_deposits: number;
+    }
+
+    interface MatchAccount {
+      match_id: string;
+      player_accounts: PlayerInfo[];
+      total_pot: number;
+      life_value: number;
+      created_at: number;
+      completed_at: number | null;
+      is_flagged: boolean;
+    }
+
+    const App: React.FC = () => {
+      const [wallet, setWallet] = useState<web3.Keypair | null>(null);
+      const [connection, setConnection] = useState<web3.Connection | null>(null);
+      const [provider, setProvider] = useState<anchor.Provider | null>(null);
+      const [program, setProgram] = useState<anchor.Program | null>(null);
+      const [lobby, setLobby] = useState<Lobby | null>(null);
+      const [matchAccount, setMatchAccount] = useState<MatchAccount | null>(null);
+      const [lobbyPDA, setLobbyPDA] = useState<web3.PublicKey | null>(null);
+      const [matchPDA, setMatchPDA] = useState<web3.PublicKey | null>(null);
+
+      useEffect(() => {
+        const init = async () => {
+          const conn = new web3.Connection(web3.clusterApiUrl('devnet'), 'confirmed');
+          setConnection(conn);
+
+          const keypair = web3.Keypair.generate();
+          setWallet(keypair);
+
+          const provider = new anchor.AnchorProvider(conn, { publicKey: keypair.publicKey, signTransaction: async (tx) => tx, signAllTransactions: async (txs) => txs }, { preflightCommitment: 'confirmed' });
+          setProvider(provider);
+
+          const program = new anchor.Program(idl, PROGRAM_ID, provider);
+          setProgram(program);
+
+          const [lobbyPDA] = web3.PublicKey.findProgramAddressSync([Buffer.from('lobby')], PROGRAM_ID);
+          setLobbyPDA(lobbyPDA);
+
+          const [matchPDA] = web3.PublicKey.findProgramAddressSync([Buffer.from('match')], PROGRAM_ID);
+          setMatchPDA(matchPDA);
+        };
+        init();
+      }, []);
+
+      const initializeLobby = async () => {
+        if (!program || !provider || !lobbyPDA) return;
+        try {
+          await program.methods
+            .initializeLobby('test_match', new anchor.BN(1_000_000))
+            .accounts({
+              lobby: lobbyPDA,
+              payer: provider.wallet.publicKey,
+              systemProgram: web3.SystemProgram.programId,
+            })
+            .rpc();
+          const lobbyAccount = await program.account.lobby.fetch(lobbyPDA);
+          setLobby(lobbyAccount);
+          alert('Lobby initialized!');
+        } catch (error) {
+          console.error(error);
+          alert('Failed to initialize lobby');
+        }
+      };
+
+      const depositToLobby = async (lives: number, team: number) => {
+        if (!program || !provider || !lobbyPDA) return;
+        try {
+          await program.methods
+            .depositToLobby(lives, team)
+            .accounts({
+              lobby: lobbyPDA,
+              player: provider.wallet.publicKey,
+            })
+            .rpc();
+          const lobbyAccount = await program.account.lobby.fetch(lobbyPDA);
+          setLobby(lobbyAccount);
+          alert('Deposited to lobby!');
+        } catch (error) {
+          console.error(error);
+          alert('Failed to deposit to lobby');
+        }
+      };
+
+      const startMatch = async () => {
+        if (!program || !provider || !lobbyPDA || !matchPDA) return;
+        try {
+          await program.methods
+            .startMatch()
+            .accounts({
+              lobby: lobbyPDA,
+              matchAccount: matchPDA,
+              payer: provider.wallet.publicKey,
+              systemProgram: web3.SystemProgram.programId,
+            })
+            .rpc();
+          const matchAccount = await program.account.matchAccount.fetch(matchPDA);
+          setMatchAccount(matchAccount);
+          alert('Match started!');
+        } catch (error) {
+          console.error(error);
+          alert('Failed to start match');
+        }
+      };
+
+      const buyLives = async (additionalLives: number) => {
+        if (!program || !provider || !matchPDA) return;
+        try {
+          await program.methods
+            .buyLives(additionalLives)
+            .accounts({
+              matchAccount: matchPDA,
+              player: provider.wallet.publicKey,
+            })
+            .rpc();
+          const matchAccount = await program.account.matchAccount.fetch(matchPDA);
+          setMatchAccount(matchAccount);
+          alert('Lives purchased!');
+        } catch (error) {
+          console.error(error);
+          alert('Failed to buy lives');
+        }
+      };
+
+      const submitMatchResults = async () => {
+        if (!program || !provider || !matchPDA || !wallet) return;
+        const treasury = web3.Keypair.generate().publicKey;
+        try {
+          await program.methods
+            .submitMatchResults([{ wallet: provider.wallet.publicKey, livesHeld: 5 }], true)
+            .accounts({
+              matchAccount: matchPDA,
+              platformTreasury: treasury,
+              systemProgram: web3.SystemProgram.programId,
+            })
+            .rpc();
+          const matchAccount = await program.account.matchAccount.fetch(matchPDA);
+          setMatchAccount(matchAccount);
+          alert('Match results submitted!');
+        } catch (error) {
+          console.error(error);
+          alert('Failed to suggest match results');
+        }
+      };
+
+      const cancelMatch = async () => {
+        if (!program || !provider || !matchPDA) return;
+        try {
+          await program.methods
+            .cancelMatchDueToTimeout()
+            .accounts({
+              matchAccount: matchPDA,
+            })
+            .rpc();
+          const matchAccount = await program.account.matchAccount.fetch(matchPDA);
+          setMatchAccount(matchAccount);
+          alert('Match cancelled!');
+        } catch (error) {
+          console.error(error);
+          alert('Failed to cancel match');
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-gray-100 p-8">
+          <h1 className="text-3xl font-bold mb-8 text-center">Frontstrike Wagering</h1>
+          <div className="max-w-2xl mx-auto space-y-6">
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h2 className="text-xl font-semibold mb-4">Wallet</h2>
+              <p>{wallet ? wallet.publicKey.toBase58() : 'Connecting...'}</p>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h2 className="text-xl font-semibold mb-4">Initialize Lobby</h2>
+              <button
+                onClick={initializeLobby}
+                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+              >
+                Initialize
+              </button>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h2 className="text-xl font-semibold mb-4">Deposit to Lobby</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block mb-1">Lives</label>
+                  <input
+                    type="number"
+                    defaultValue={2}
+                    id="lives"
+                    className="border p-2 rounded w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1">Team (1 or 2)</label>
+                  <input
+                    type="number"
+                    defaultValue={1}
+                    id="team"
+                    className="border p-2 rounded w-full"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    const lives = parseInt((document.getElementById('lives') as HTMLInputElement).value);
+                    const team = parseInt((document.getElementById('team') as HTMLInputElement).value);
+                    depositToLobby(lives, team);
+                  }}
+                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                >
+                  Deposit
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h2 className="text-xl font-semibold mb-4">Start Match</h2>
+              <button
+                onClick={startMatch}
+                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+              >
+                Start Match
+              </button>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h2 className="text-xl font-semibold mb-4">Buy Lives</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block mb-1">Additional Lives</label>
+                  <input
+                    type="number"
+                    defaultValue={3}
+                    id="additional-lives"
+                    className="border p-2 rounded w-full"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    const lives = parseInt((document.getElementById('additional-lives') as HTMLInputElement).value);
+                    buyLives(lives);
+                  }}
+                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                >
+                  Buy Lives
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h2 className="text-xl font-semibold mb-4">Submit Match Results</h2>
+              <button
+                onClick={submitMatchResults}
+                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+              >
+                Submit Results
+              </button>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h2 className="text-xl font-semibold mb-4">Cancel Match</h2>
+              <button
+                onClick={cancelMatch}
+                className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+              >
+                Cancel Match
+              </button>
+            </div>
+
+            {lobby && (
+              <div className="bg-white p-6 rounded-lg shadow">
+                <h2 className="text-xl font-semibold mb-4">Lobby Status</h2>
+                <p>Match ID: {lobby.match_id}</p>
+                <p>Total Pot: {lobby.total_pot}</p>
+                <p>Life Value: {lobby.life_value}</p>
+                <p>Team 1 Deposits: {lobby.team1_deposits}</p>
+                <p>Team 2 Deposits: {lobby.team2_deposits}</p>
+              </div>
+            )}
+
+            {matchAccount && (
+              <div className="bg-white p-6 rounded-lg shadow">
+                <h2 className="text-xl font-semibold mb-4">Match Status</h2>
+                <p>Match ID: {matchAccount.match_id}</p>
+                <p>Total Pot: {matchAccount.total_pot}</p>
+                <p>Life Value: {matchAccount.life_value}</p>
+                <p>Flagged: {matchAccount.is_flagged.toString()}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
