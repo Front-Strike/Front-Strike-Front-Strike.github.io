@@ -13,14 +13,17 @@
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel" data-presets="react,typescript" data-plugins="transform-modules-umd">
+  <script type="text/babel" data-presets="react,typescript">
     // Log to help debug
     console.log('Script started');
 
-    // Import dependencies
-    import * as React from 'https://cdn.jsdelivr.net/npm/react@18.2.0/+esm';
-    import { useState, useEffect } from 'https://cdn.jsdelivr.net/npm/react@18.2.0/+esm';
-    import * as ReactDOM from 'https://cdn.jsdelivr.net/npm/react-dom@18.2.0/+esm';
+    // Check for React and ReactDOM
+    if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+      console.error('React or ReactDOM not loaded');
+      document.getElementById('root').innerHTML = '<div class="text-red-500 p-4">Error: React failed to load</div>';
+    } else {
+      console.log('React and ReactDOM loaded');
+    }
 
     // Error Boundary Component
     class ErrorBoundary extends React.Component {
@@ -38,21 +41,12 @@
     }
 
     const App = () => {
-      const [status, setStatus] = useState('Initializing...');
-      const [error, setError] = useState(null);
+      const [status, setStatus] = React.useState('Initializing...');
+      const [error, setError] = React.useState(null);
 
-      useEffect(() => {
-        const init = async () => {
-          try {
-            console.log('Initializing app');
-            setStatus('App loaded successfully');
-          } catch (err) {
-            console.error('Initialization error:', err);
-            setError(err.message);
-            setStatus('Failed to initialize');
-          }
-        };
-        init();
+      React.useEffect(() => {
+        console.log('Initializing app');
+        setStatus('App loaded successfully');
       }, []);
 
       if (error) {
@@ -94,6 +88,7 @@
           console.log('Rendered successfully');
         } catch (err) {
           console.error('Render error:', err);
+          root.innerHTML = '<div class="text-red-500 p-4">Render Error: ' + err.message + '</div>';
         }
       } else {
         console.error('Root element not found');
